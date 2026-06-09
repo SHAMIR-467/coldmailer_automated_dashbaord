@@ -1,17 +1,19 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field, field_validator
 import httpx
 
-from app.config import settings
+from app.config import apply_runtime_settings, save_runtime_settings, settings
+from app.database import ensure_database_schema
 from app.services.ollama_service import test_ollama_connection
+from app.services.system_status import collect_system_status
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
 class SettingsResponse(BaseModel):
-    supabase_url: str
-    supabase_key: str
+    database_url: str
     redis_url: str
+    proxy_url: str
     smtp_pass: str
     smtp_host: str
     smtp_port: int
@@ -24,6 +26,40 @@ class SettingsResponse(BaseModel):
     scrape_batch_size: int
     scrape_delay_min: float
     scrape_delay_max: float
+    cors_origins: list[str]
+
+
+class SettingsUpdateRequest(BaseModel):
+    database_url: str = Field(min_length=1)
+    redis_url: str = Field(min_length=1)
+    proxy_url: str = ""
+    smtp_pass: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_from_name: str = ""
+    smtp_from_email: str = ""
+    ollama_base_url: str = ""
+    ollama_model: str = "llama3"
+    daily_email_limit: int = Field(default=20000, ge=1)
+    scrape_batch_size: int = Field(default=20, ge=1, le=500)
+    scrape_delay_min: float = Field(default=2.0, ge=0)
+    scrape_delay_max: float = Field(default=5.0, ge=0)
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, value: str) -> str:
+        if not value.startswith(("sqlite+aiosqlite:///", "sqlite:///")):
+            raise ValueError("DATABASE_URL must use SQLite, for example sqlite+aiosqlite:///backend/data/leadgen.db")
+        return value
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
 
 class SmtpTestRequest(BaseModel):
@@ -37,9 +73,9 @@ class SmtpTestRequest(BaseModel):
 @router.get("", response_model=SettingsResponse)
 async def get_settings() -> SettingsResponse:
     return SettingsResponse(
-        supabase_url=settings.SUPABASE_URL,
-        supabase_key="********" if settings.SUPABASE_KEY else "",
+        database_url=settings.database_url,
         redis_url=settings.REDIS_URL,
+        proxy_url=settings.PROXY_URL,
         smtp_pass="********" if settings.SMTP_PASS else "",
         smtp_host=settings.SMTP_HOST,
         smtp_port=settings.SMTP_PORT,
@@ -52,12 +88,20 @@ async def get_settings() -> SettingsResponse:
         scrape_batch_size=settings.SCRAPE_BATCH_SIZE,
         scrape_delay_min=settings.SCRAPE_DELAY_MIN,
         scrape_delay_max=settings.SCRAPE_DELAY_MAX,
+        cors_origins=settings.CORS_ORIGINS,
     )
 
 
-@router.put("", response_model=dict[str, str])
-async def update_settings() -> dict[str, str]:
-    return {"status": "settings are read-only in this MVP"}
+@router.put("", response_model=SettingsResponse)
+async def update_settings(payload: SettingsUpdateRequest) -> SettingsResponse:
+    runtime_settings = payload.model_dump()
+    save_runtime_settings(runtime_settings)
+    apply_runtime_settings(runtime_settings)
+    try:
+        await ensure_database_schema()
+    except Exception:
+        pass
+    return await get_settings()
 
 
 @router.post("/test-smtp", response_model=dict[str, bool | str])
@@ -103,3 +147,8 @@ async def get_test_ollama() -> dict[str, object]:
         except Exception:
             models = []
     return {"connected": connected, "models": models}
+
+
+@router.get("/status", response_model=dict[str, object])
+async def get_system_status() -> dict[str, object]:
+    return await collect_system_status()

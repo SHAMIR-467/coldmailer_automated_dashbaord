@@ -1,8 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, func, text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -33,9 +32,9 @@ class EmailLogStatus(str, enum.Enum):
 class Job(Base):
     __tablename__ = "jobs"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     keyword: Mapped[str] = mapped_column(String(500), nullable=False)
-    cities: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default=text("'{}'::text[]"))
+    cities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus, name="job_status"), nullable=False, default=JobStatus.pending)
     total_extracted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_emailed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -52,8 +51,8 @@ class Job(Base):
 class Lead(Base):
     __tablename__ = "leads"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     business_name: Mapped[str] = mapped_column(String(500), nullable=False)
     email: Mapped[str | None] = mapped_column(String(500))
     phone: Mapped[str | None] = mapped_column(String(100))
@@ -76,9 +75,9 @@ class Lead(Base):
 class EmailLog(Base):
     __tablename__ = "email_logs"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    lead_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"), nullable=False)
-    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lead_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"), nullable=False)
+    job_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     subject: Mapped[str] = mapped_column(Text, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     sent_at = mapped_column(DateTime(timezone=True))
@@ -94,8 +93,7 @@ class EmailLog(Base):
 class CityKeyword(Base):
     __tablename__ = "city_keywords"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     keyword: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
-    cities: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default=text("'{}'::text[]"))
+    cities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-

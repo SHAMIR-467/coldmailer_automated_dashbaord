@@ -1,16 +1,40 @@
 from functools import lru_cache
-from typing import Annotated
-from urllib.parse import quote_plus, urlparse
+import json
+from pathlib import Path
+from typing import Any
 
-from pydantic import AnyHttpUrl, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+RUNTIME_SETTINGS_PATH = Path(__file__).resolve().parents[1] / "data" / "runtime_settings.json"
+
+
+def _default_database_url() -> str:
+    db_path = Path(__file__).resolve().parents[1] / "data" / "leadgen.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite+aiosqlite:///{db_path.as_posix()}"
+
+
+def _normalize_sqlite_url(url: str) -> str:
+    if not url.startswith(("sqlite+aiosqlite:///", "sqlite:///")):
+        raise ValueError("DATABASE_URL must use SQLite, for example sqlite+aiosqlite:///path/to/leadgen.db")
+
+    prefix = "sqlite+aiosqlite:///" if url.startswith("sqlite+aiosqlite:///") else "sqlite:///"
+    raw_path = url.split("///", 1)[1].strip()
+    if not raw_path:
+        raise ValueError("DATABASE_URL must point to a SQLite file")
+
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = (Path(__file__).resolve().parents[2] / path).resolve()
+    return f"{prefix}{path.as_posix()}"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""
+    DATABASE_URL: str = Field(default_factory=_default_database_url)
     REDIS_URL: str = "redis://localhost:6379/0"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3"
@@ -36,18 +60,56 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        if self.SUPABASE_URL.startswith(("postgresql://", "postgresql+asyncpg://")):
-            return self.SUPABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-        parsed = urlparse(self.SUPABASE_URL)
-        if not parsed.hostname:
-            raise ValueError("SUPABASE_URL must be a Supabase project URL or a PostgreSQL URL")
-        project_ref = parsed.hostname.split(".")[0]
-        password = quote_plus(self.SUPABASE_KEY)
-        return f"postgresql+asyncpg://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
+        return _normalize_sqlite_url(self.DATABASE_URL)
 
     @property
     def sync_database_url(self) -> str:
-        return self.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+        return self.database_url.replace("sqlite+aiosqlite:///", "sqlite:///", 1)
+
+    def database_url_or_none(self) -> str | None:
+        try:
+            return self.database_url
+        except ValueError:
+            return None
+
+    def startup_issues(self) -> list[str]:
+        issues: list[str] = []
+        if not self.database_url_or_none():
+            issues.append("DATABASE_URL must be set")
+        if not self.REDIS_URL:
+            issues.append("REDIS_URL must be set")
+        if not self.OLLAMA_BASE_URL:
+            issues.append("OLLAMA_BASE_URL must be set")
+        return issues
+
+
+def load_runtime_settings() -> dict[str, Any]:
+    if not RUNTIME_SETTINGS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(RUNTIME_SETTINGS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_runtime_settings(overrides: dict[str, Any]) -> None:
+    RUNTIME_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RUNTIME_SETTINGS_PATH.write_text(json.dumps(overrides, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def apply_runtime_settings(overrides: dict[str, Any]) -> None:
+    for key, value in overrides.items():
+        field_name = key.upper() if hasattr(settings, key.upper()) else key
+        if hasattr(settings, field_name):
+            if field_name == "DATABASE_URL":
+                value = _normalize_sqlite_url(str(value))
+            if field_name == "CORS_ORIGINS" and isinstance(value, str):
+                value = [origin.strip() for origin in value.split(",") if origin.strip()]
+            setattr(settings, field_name, value)
+    from app.database import reset_database_resources
+
+    reset_database_resources()
 
 
 @lru_cache
@@ -56,3 +118,4 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+apply_runtime_settings(load_runtime_settings())

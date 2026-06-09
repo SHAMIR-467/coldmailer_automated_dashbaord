@@ -6,8 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-os.environ.setdefault("SUPABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
-os.environ.setdefault("SUPABASE_KEY", "postgres")
+os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{(Path(__file__).resolve().parents[1] / 'data' / 'test.db').as_posix()}")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 

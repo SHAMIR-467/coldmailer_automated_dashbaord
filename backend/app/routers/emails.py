@@ -56,7 +56,10 @@ async def resend_email(request: Request, email_log_id: UUID, db: AsyncSession = 
     email_log.error_message = None
     await db.commit()
     await db.refresh(email_log)
-    generate_and_send_email_task.delay(str(email_log.lead_id))
+    try:
+        generate_and_send_email_task.delay(str(email_log.lead_id))
+    except Exception:
+        pass
     return email_log
 
 

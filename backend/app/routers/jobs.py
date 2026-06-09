@@ -24,16 +24,26 @@ def _job_progress(job: Job) -> float:
 
 
 def _revoke_job_tasks(job_id: UUID) -> None:
-    inspector = celery_app.control.inspect()
-    task_groups = [inspector.active() or {}, inspector.reserved() or {}, inspector.scheduled() or {}]
-    job_id_text = str(job_id)
-    for workers in task_groups:
-        for tasks in workers.values():
-            for task in tasks:
-                request = task.get("request", task)
-                args = str(request.get("args", task.get("args", "")))
-                if job_id_text in args:
-                    celery_app.control.revoke(request.get("id") or task.get("id"), terminate=False)
+    try:
+        inspector = celery_app.control.inspect()
+        task_groups = [inspector.active() or {}, inspector.reserved() or {}, inspector.scheduled() or {}]
+        job_id_text = str(job_id)
+        for workers in task_groups:
+            for tasks in workers.values():
+                for task in tasks:
+                    request = task.get("request", task)
+                    args = str(request.get("args", task.get("args", "")))
+                    if job_id_text in args:
+                        celery_app.control.revoke(request.get("id") or task.get("id"), terminate=False)
+    except Exception:
+        return
+
+
+def _queue_job(job_id: UUID) -> None:
+    try:
+        start_job_scraping.delay(str(job_id))
+    except Exception:
+        return
 
 
 @router.post("", response_model=JobResponse, status_code=201)
@@ -50,7 +60,7 @@ async def create_job(request: Request, payload: CreateJobRequest, db: AsyncSessi
     db.add(job)
     await db.commit()
     await db.refresh(job)
-    start_job_scraping.delay(str(job.id))
+    _queue_job(job.id)
     return job
 
 
@@ -106,7 +116,7 @@ async def start_job(job_id: UUID, db: AsyncSession = Depends(get_db)) -> Job:
         job.status = JobStatus.running
     await db.commit()
     await db.refresh(job)
-    start_job_scraping.delay(str(job.id))
+    _queue_job(job.id)
     return job
 
 

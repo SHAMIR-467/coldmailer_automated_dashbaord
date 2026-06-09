@@ -82,17 +82,22 @@ export type DashboardStats = {
 };
 
 export type SettingsResponse = {
+  database_url: string;
   smtp_host: string;
   smtp_port: number;
   smtp_user: string;
+  smtp_pass: string;
   smtp_from_name: string;
   smtp_from_email: string;
+  redis_url: string;
+  proxy_url: string;
   ollama_base_url: string;
   ollama_model: string;
   daily_email_limit: number;
   scrape_batch_size: number;
   scrape_delay_min: number;
   scrape_delay_max: number;
+  cors_origins: string[];
 };
 
 function cleanParams<T extends Record<string, unknown>>(params?: T) {
@@ -176,8 +181,8 @@ export const settingsApi = {
     const response = await api.post<{ ok: boolean }>("/settings/test-ollama");
     return response.data;
   },
-  async saveSettings(): Promise<{ status: string }> {
-    const response = await api.put<{ status: string }>("/settings");
+  async saveSettings(payload: SettingsResponse): Promise<SettingsResponse> {
+    const response = await api.put<SettingsResponse>("/settings", payload);
     return response.data;
   }
 };

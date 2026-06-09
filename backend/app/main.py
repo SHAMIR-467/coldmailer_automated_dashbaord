@@ -1,5 +1,12 @@
+import os
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+import logging
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,12 +15,13 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import settings
-from app.database import Base, async_engine
+from app.database import ensure_database_schema
 from app.logging_config import configure_logging
 from app.rate_limit import limiter
 from app.routers import dashboard, emails, jobs, leads, settings as settings_router
 
 configure_logging()
+logger = logging.getLogger(__name__)
 
 
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
@@ -22,8 +30,13 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRe
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    for issue in settings.startup_issues():
+        logger.warning("Startup issue: %s", issue)
+    try:
+        if settings.database_url_or_none():
+            await ensure_database_schema()
+    except Exception:
+        logger.exception("Database initialization skipped because the connection failed")
     yield
 
 
@@ -60,4 +73,11 @@ async def health() -> dict[str, str]:
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+if __name__ == "__main__" and not os.getenv("LEADGEN_SKIP_SERVER"):
+    import uvicorn
+
+    uvicorn.run(app, host=os.getenv("HOST", "0.0.0.0"), port=int(os.getenv("PORT", "8000")))
